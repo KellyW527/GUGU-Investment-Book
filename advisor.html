@@ -43,10 +43,10 @@
         </div>
 
         <div class="step-strip interactive-wrap">
-          <button class="step-btn active" id="stepRisk" type="button" data-step-btn="risk">1 风险</button>
-          <button class="step-btn" id="stepBucket" type="button" data-step-btn="bucket">2 分桶</button>
-          <button class="step-btn" id="stepAllocation" type="button" data-step-btn="allocation">3 配置</button>
-          <button class="step-btn" id="stepExecute" type="button" data-step-btn="execute">4 执行</button>
+          <button class="step-btn active" id="stepRisk" type="button" data-step-btn="risk">1 先看情况</button>
+          <button class="step-btn" id="stepBucket" type="button" data-step-btn="bucket">2 把钱分开</button>
+          <button class="step-btn" id="stepAllocation" type="button" data-step-btn="allocation">3 看怎么放</button>
+          <button class="step-btn" id="stepExecute" type="button" data-step-btn="execute">4 看怎么调</button>
         </div>
 
         <div class="spread-jump">
@@ -62,16 +62,16 @@
         <div class="spread-header">
           <div>
             <div class="eyebrow">step one</div>
-            <h2 style="margin:16px 0 0">先看风险</h2>
-            <p>先把承受力、现金流和近期支出看清楚。后面的分桶、配置和执行，都会以这里为前提。</p>
+            <h2 style="margin:16px 0 0">先看你现在适合多大波动</h2>
+            <p>这一步不是判断你敢不敢冲，而是一起看：你最近会不会要用钱、手上够不够稳、现在适合走到哪一步。</p>
           </div>
-          <div class="mini-tag" id="riskTag">R3 · 稳健平衡</div>
+          <div class="mini-tag" id="riskTag">R3 · 中间偏稳</div>
         </div>
 
         <div class="grid-2">
           <div class="card">
-            <strong>风险测评</strong>
-            <p id="riskQuizHint">先把 8 题做完，结果会更稳。</p>
+            <strong>看看你自己愿意承担多少波动</strong>
+            <p id="riskQuizHint">先把 8 题做完会更准；没做完也能生成，但系统会更保守一些。</p>
             <div class="track" style="margin-top:12px"><span class="fill" id="riskProgressFill" style="width:0%;background:#6f8193"></span></div>
             <div class="paper-chip" id="riskProgressLabel" style="margin-top:12px">0 / 8</div>
             <div class="rule-list" id="riskQuiz" style="margin-top:16px">
@@ -87,8 +87,8 @@
           </div>
 
           <div class="card">
-            <strong>现金流输入</strong>
-            <p>这一页决定后面所有边界，不要跳过。</p>
+            <strong>看看你现实里能承受多少波动</strong>
+            <p>这里会看你的日常开销、近期支出和投资期限。系统最后不会只听主观选择，也会看现实条件。</p>
             <div class="form-grid" style="margin-top:14px">
               <div class="field"><label for="advisorMonthlyExpense">每月基本支出</label><input id="advisorMonthlyExpense" type="number" min="0"></div>
               <div class="field"><label for="advisorLiquidCash">当前现金 / 货基</label><input id="advisorLiquidCash" type="number" min="0"></div>
@@ -101,18 +101,80 @@
               <div class="field full"><label for="advisorMaxLoss">最大可承受亏损</label><select id="advisorMaxLoss"><option value="5">5%以内</option><option value="8">8%以内</option><option value="12" selected>12%以内</option><option value="18">18%以内</option><option value="25">25%以内</option></select></div>
             </div>
             <div class="btn-row">
-              <button class="btn-primary" type="button" id="generatePlanBtn">生成结果</button>
+              <button class="btn-primary" type="button" id="generatePlanBtn">生成我的结果</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card" id="existingAssetsCard" style="margin-top:18px">
+          <strong>你现在已经持有什么资产</strong>
+          <p>这一步不是算总资产，而是看你现在的钱已经放在哪里。系统会结合你现在的持仓、风险偏好和未来支出，一起判断后面是继续补安全垫，还是先调整比例。</p>
+          <div class="rule-grid" style="margin-top:16px">
+            <div class="rule-sheet">
+              <strong>现金类</strong>
+              <p>这部分是最容易马上用到的钱，通常更适合承担生活和应急。</p>
+              <div class="form-grid" style="margin-top:14px">
+                <div class="field"><label for="assetBankCash">银行卡现金</label><input id="assetBankCash" type="number" min="0" value="0"></div>
+                <div class="field"><label for="assetWalletCash">活期 / 余额类产品</label><input id="assetWalletCash" type="number" min="0" value="0"></div>
+                <div class="field full"><label for="assetMoneyMarketFunds">货币基金</label><input id="assetMoneyMarketFunds" type="number" min="0" value="0"></div>
+              </div>
+            </div>
+            <div class="rule-sheet">
+              <strong>债券类</strong>
+              <p>可以理解成比股票更稳一点的中间层，用来缓冲组合起伏。</p>
+              <div class="form-grid" style="margin-top:14px">
+                <div class="field"><label for="assetBondFunds">债券基金</label><input id="assetBondFunds" type="number" min="0" value="0"></div>
+                <div class="field"><label for="assetBondsFixedIncome">债券 / 固收产品</label><input id="assetBondsFixedIncome" type="number" min="0" value="0"></div>
+              </div>
+            </div>
+            <div class="rule-sheet">
+              <strong>股票类</strong>
+              <p>这部分是更容易波动、也更适合拉长时间去看的资产。</p>
+              <div class="form-grid" style="margin-top:14px">
+                <div class="field"><label for="assetIndividualStocks">个股</label><input id="assetIndividualStocks" type="number" min="0" value="0"></div>
+                <div class="field"><label for="assetStockFunds">股票基金</label><input id="assetStockFunds" type="number" min="0" value="0"></div>
+                <div class="field full"><label for="assetEtfIndexFunds">ETF / 指数基金</label><input id="assetEtfIndexFunds" type="number" min="0" value="0"></div>
+              </div>
+            </div>
+            <div class="rule-sheet">
+              <strong>其他投资资产</strong>
+              <p>这部分会单独显示，不默认并入现金、债券、股票的主图比较里。</p>
+              <div class="form-grid" style="margin-top:14px">
+                <div class="field full"><label for="assetOtherAssets">黄金 / REITs / 其他投资资产</label><input id="assetOtherAssets" type="number" min="0" value="0"></div>
+              </div>
+            </div>
+          </div>
+          <div class="infographic-grid" id="assetLiveSummary" style="margin-top:18px">
+            <div class="kpi">
+              <small>当前已录入总资产</small>
+              <strong id="assetTotalTracked">¥0</strong>
+              <span>只统计你在这里录入的已有资产</span>
+            </div>
+            <div class="kpi">
+              <small>当前现金类占比</small>
+              <strong id="assetCashPct">0%</strong>
+              <span>银行卡现金、活期类和货币基金</span>
+            </div>
+            <div class="kpi">
+              <small>当前债券类占比</small>
+              <strong id="assetBondPct">0%</strong>
+              <span>债券基金和固收产品</span>
+            </div>
+            <div class="kpi">
+              <small>当前股票类占比</small>
+              <strong id="assetEquityPct">0%</strong>
+              <span>个股、股票基金和 ETF / 指数基金</span>
             </div>
           </div>
         </div>
 
         <div class="metric-grid">
           <div class="metric-card">
-            <div class="kicker"><small>风险条</small><span class="value-note" id="riskBarLabel">题目和现金流一起算</span></div>
+            <div class="kicker"><small>你的整体风险位置</small><span class="value-note" id="riskBarLabel">系统会一起看主观选择、现实现金流和已有资产</span></div>
             <div class="paper-scale" id="riskBars"></div>
           </div>
           <div class="metric-card">
-            <div class="kicker"><small>当前阶段</small><span class="value-note">现在该先做什么</span></div>
+            <div class="kicker"><small>你现在更适合哪种节奏</small><span class="value-note">不是让你更猛，而是告诉你现在该先做什么</span></div>
             <div class="stage-glyph">
               <div class="stage-ruler">
                 <span class="dot dot-a" data-stage-dot="cash"></span>
@@ -121,20 +183,20 @@
                 <span class="dot dot-d" data-stage-dot="extra"></span>
               </div>
               <div class="stage-labels">
-                <strong id="riskPhase">稳健积累期</strong>
-                <span id="riskPhaseReason">先兼顾未来支出。</span>
+                <strong id="riskPhase">增长准备期</strong>
+                <span id="riskPhaseReason">可以开始做配置，但先把生活和已知支出照顾好。</span>
               </div>
             </div>
           </div>
           <div class="metric-card">
-            <div class="kicker"><small>综合分数</small><span class="value-note" id="riskScoreHint">主观 50 · 客观 63</span></div>
+            <div class="kicker"><small>最终采用的风险结果</small><span class="value-note" id="riskScoreHint">系统最后不是只听你主观选择</span></div>
             <div class="score-gauge" id="riskScoreGauge">
               <div class="score-ring" style="--score:58"></div>
               <div class="score-content"><strong id="riskScore">58</strong><span>score</span></div>
             </div>
           </div>
           <div class="metric-card">
-            <div class="kicker"><small>最大回撤</small><span class="value-note" id="riskEmergency">3.8个月</span></div>
+            <div class="kicker"><small>你大概最多可能经历的下跌</small><span class="value-note" id="riskEmergency">不是一定会跌这么多，而是大致可能承受的波动范围</span></div>
             <div class="drawdown-scale">
               <div class="drawdown-axis"></div>
               <div class="drawdown-tick" style="left:14%"><span>-5%</span></div>
@@ -148,11 +210,12 @@
         </div>
 
         <div class="rule-grid" id="riskNarrative" style="margin-top:18px"></div>
+        <div class="rule-grid" id="holdingsNarrative" style="margin-top:18px"></div>
 
         <div class="spread-jump">
           <a class="turn-link" href="#advisor-bucket" data-next-step="bucket">
             <span class="page-no">02</span>
-            <span class="copy"><small>next spread</small><span>翻到分桶</span></span>
+            <span class="copy"><small>next spread</small><span>翻到把钱按用途分开</span></span>
             <span class="arrow">→</span>
           </a>
         </div>
@@ -162,10 +225,10 @@
         <div class="spread-header">
           <div>
             <div class="eyebrow">step two</div>
-            <h2 style="margin:16px 0 0">再分现金</h2>
-            <p>分桶不是为了复杂，而是先把该留在身边的钱留下来。</p>
+            <h2 style="margin:16px 0 0">先把钱按用途分开</h2>
+            <p>不是所有钱都该一起冒同样的波动。这里会先分出最近要用的钱、这段时间大概率会用到的钱，以及暂时可以拿去做长期配置的钱。</p>
           </div>
-          <div class="small-note">生活桶 / 稳定桶 / 增长桶</div>
+          <div class="small-note">先留生活钱，再看稳妥的钱，最后才看增长的钱</div>
         </div>
         <div class="bucket-list" id="bucketList"></div>
         <div class="rule-grid" id="bucketNarrative" style="margin-top:18px"></div>
@@ -182,18 +245,18 @@
         <div class="spread-header">
           <div>
             <div class="eyebrow">step three</div>
-            <h2 style="margin:16px 0 0">股债现配置</h2>
-            <p>这里先只给结果，不把解释做得太吵。</p>
+            <h2 style="margin:16px 0 0">现金、稳一点的资产、增长类资产怎么分</h2>
+            <p>这一步会把“该留着的”“该稳一点放着的”“可以承担长期波动的”分开给建议。</p>
           </div>
-          <div class="small-note">现金 / 债券 / 股票</div>
+          <div class="small-note">现金 / 稳一点的资产 / 增长类资产</div>
         </div>
         <div class="allocation-spread">
           <div class="allocation-card">
-            <strong>当前比例</strong>
+            <strong>建议比例</strong>
             <div class="allocation-list" id="allocationList" style="margin-top:16px"></div>
           </div>
           <div class="allocation-card">
-            <strong>配置边注</strong>
+            <strong>为什么会这样分</strong>
             <div class="btn-row" id="allocationPills" style="margin-top:16px"></div>
           </div>
         </div>
@@ -201,7 +264,7 @@
         <div class="spread-jump">
           <a class="turn-link" href="#advisor-mpt" data-next-step="allocation">
             <span class="page-no">04</span>
-            <span class="copy"><small>next spread</small><span>翻到 MPT 约束</span></span>
+            <span class="copy"><small>next spread</small><span>翻到系统怎么做小幅优化</span></span>
             <span class="arrow">→</span>
           </a>
         </div>
@@ -211,10 +274,10 @@
         <div class="spread-header">
           <div>
             <div class="eyebrow">step three · continuation</div>
-            <h2 style="margin:16px 0 0">MPT 轻量约束</h2>
-            <p>这不是另一个配置卡，而是配置背后的边界页。</p>
+            <h2 style="margin:16px 0 0">系统在安全边界内做的小幅优化</h2>
+            <p>不是为了算出最花哨的结果，而是在不突破安全线的前提下，把比例调得更顺一点。</p>
           </div>
-          <div class="small-note">目标 / 约束 / 上限 / 输出</div>
+          <div class="small-note">先守住安全边界，再做小幅微调</div>
         </div>
         <div class="rule-grid" id="mptList"></div>
         <div class="spread-jump">
@@ -230,12 +293,12 @@
         <div class="spread-header">
           <div>
             <div class="eyebrow">step four</div>
-            <h2 style="margin:16px 0 0">分散与债券</h2>
-            <p>切换视角，一次只看一组规则，会更像真正的阅读。</p>
+            <h2 style="margin:16px 0 0">股票怎么更分散，稳一点的资产怎么安排</h2>
+            <p>这里不是教你用术语，而是告诉你：如果要配股票该怎么别太集中，如果要配债券类该怎么更稳。</p>
           </div>
           <div class="sub-switch interactive-wrap">
-            <button class="switch-btn active" type="button" data-diversify-switch="stock">股票分散</button>
-            <button class="switch-btn" type="button" data-diversify-switch="bond">债券节奏</button>
+            <button class="switch-btn active" type="button" data-diversify-switch="stock">股票怎么分散</button>
+            <button class="switch-btn" type="button" data-diversify-switch="bond">稳一点的资产怎么配</button>
           </div>
         </div>
         <div id="stockRulesWrap"><div class="rule-grid" id="stockRules"></div></div>
@@ -243,7 +306,7 @@
         <div class="spread-jump">
           <a class="turn-link" href="#advisor-rebalance" data-next-step="execute">
             <span class="page-no">06</span>
-            <span class="copy"><small>next spread</small><span>翻到约束与再平衡</span></span>
+            <span class="copy"><small>next spread</small><span>翻到安全边界和怎么调回去</span></span>
             <span class="arrow">→</span>
           </a>
         </div>
@@ -253,12 +316,12 @@
         <div class="spread-header">
           <div>
             <div class="eyebrow">step four · continuation</div>
-            <h2 style="margin:16px 0 0">约束与再平衡</h2>
-            <p>先看哪些不能碰，再看什么时候调、怎么调。</p>
+            <h2 style="margin:16px 0 0">系统给你的安全边界，以及什么时候把比例调回去</h2>
+            <p>先看哪些钱最好先别动，再看如果比例偏得太远，后面应该怎么慢慢拉回来。</p>
           </div>
           <div class="sub-switch interactive-wrap">
-            <button class="switch-btn active" type="button" data-execution-switch="split">约束</button>
-            <button class="switch-btn" type="button" data-execution-switch="rebalance">再平衡</button>
+            <button class="switch-btn active" type="button" data-execution-switch="split">安全边界</button>
+            <button class="switch-btn" type="button" data-execution-switch="rebalance">什么时候调回去</button>
           </div>
         </div>
         <div id="executionSplit"><div class="rule-grid" id="constraintRules"></div></div>

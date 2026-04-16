@@ -8,33 +8,52 @@
   var escapeHtml = GuguSite.escapeHtml;
   var STORAGE_KEY = GuguSite.STORAGE_KEYS.risk;
   var runStudentWealthPlanner = StudentWealthPlanner.runStudentWealthPlanner;
+  var buildCurrentHoldingsSummary = StudentWealthPlanner.buildCurrentHoldingsSummary;
   var defaultMPTConfig = StudentWealthPlanner.demoMPTConfig;
 
   var riskAnswers = readJSON(STORAGE_KEY, {});
   var advisorState = { generated: false, step: "risk", plan: null, input: null };
 
   var RISK_LEVEL_META = {
-    R1: { tag: "R1 · 现金防守", bars: 1, label: "现金防守" },
-    R2: { tag: "R2 · 稳健保守", bars: 2, label: "稳健保守" },
-    R3: { tag: "R3 · 稳健平衡", bars: 3, label: "稳健平衡" },
-    R4: { tag: "R4 · 进取增长", bars: 4, label: "进取增长" },
-    R5: { tag: "R5 · 高波动增长", bars: 5, label: "高波动增长" }
+    R1: { tag: "R1 · 非常保守", position: "更适合把稳放在第一位", bars: 1 },
+    R2: { tag: "R2 · 偏稳", position: "能接受一点波动，但还是更看重安全", bars: 2 },
+    R3: { tag: "R3 · 中间偏稳", position: "可以开始做配置，但不会走得太激进", bars: 3 },
+    R4: { tag: "R4 · 稍偏进取", position: "可以承担更多波动，但前提还是边界清楚", bars: 4 },
+    R5: { tag: "R5 · 波动更高", position: "主观上能承担较多波动，但系统仍会看现实条件", bars: 5 }
   };
 
   var STAGE_META = {
     cash_repair: {
-      label: "现金修复期",
+      label: "先补安全垫",
+      explain: "说明现在最重要的是把生活和应急的钱留够。",
+      chip: "安全垫优先",
       glyph: "cash"
     },
     steady_accumulation: {
-      label: "稳健积累期",
+      label: "先稳住再慢慢配",
+      explain: "说明已经可以开始配置，但还是要先看接下来会不会用钱。",
+      chip: "先稳后进",
       glyph: "steady"
     },
     growth_ready: {
       label: "增长准备期",
+      explain: "说明你已经不是完全不能投，但也还没到可以很激进的时候。",
+      chip: "增长准备期",
       glyph: "growth"
     }
   };
+
+  var ASSET_FIELD_IDS = [
+    "assetBankCash",
+    "assetWalletCash",
+    "assetMoneyMarketFunds",
+    "assetBondFunds",
+    "assetBondsFixedIncome",
+    "assetIndividualStocks",
+    "assetStockFunds",
+    "assetEtfIndexFunds",
+    "assetOtherAssets"
+  ];
 
   function qs(id){ return document.getElementById(id); }
   function qsa(selector){ return Array.prototype.slice.call(document.querySelectorAll(selector)); }
@@ -55,12 +74,12 @@
     return Array.from(new Set((items || []).filter(Boolean)));
   }
 
-  function riskLabel(level){
+  function riskTag(level){
     return (RISK_LEVEL_META[level] || RISK_LEVEL_META.R3).tag;
   }
 
-  function stageLabel(stage){
-    return (STAGE_META[stage] || STAGE_META.steady_accumulation).label;
+  function stageMeta(stage){
+    return STAGE_META[stage] || STAGE_META.steady_accumulation;
   }
 
   function estimateDrawdown(target){
@@ -94,13 +113,7 @@
   }
 
   function horizonRank(horizon){
-    var order = {
-      lt_3m: 0,
-      "3m_1y": 1,
-      "1y_3y": 2,
-      "3y_5y": 3,
-      gt_5y: 4
-    };
+    var order = { lt_3m: 0, "3m_1y": 1, "1y_3y": 2, "3y_5y": 3, gt_5y: 4 };
     return order[horizon] == null ? 2 : order[horizon];
   }
 
@@ -217,9 +230,32 @@
     };
   }
 
+  function readExistingAssets(){
+    return {
+      bankCash: numberValue(qs("assetBankCash").value || 0),
+      walletCash: numberValue(qs("assetWalletCash").value || 0),
+      moneyMarketFunds: numberValue(qs("assetMoneyMarketFunds").value || 0),
+      bondFunds: numberValue(qs("assetBondFunds").value || 0),
+      bondsFixedIncome: numberValue(qs("assetBondsFixedIncome").value || 0),
+      individualStocks: numberValue(qs("assetIndividualStocks").value || 0),
+      stockFunds: numberValue(qs("assetStockFunds").value || 0),
+      etfIndexFunds: numberValue(qs("assetEtfIndexFunds").value || 0),
+      otherAssets: numberValue(qs("assetOtherAssets").value || 0)
+    };
+  }
+
   function buildPlannerInput(){
     var raw = readRawInputs();
+    var existingAssets = readExistingAssets();
+    var holdingsSummary = buildCurrentHoldingsSummary(existingAssets);
+    var trackedMain = holdingsSummary.cashLikeAmount + holdingsSummary.bondAmount + holdingsSummary.equityAmount;
+    var currentAllocation = trackedMain > 0 ? {
+      cash: holdingsSummary.cashLikeAmount / trackedMain,
+      bonds: holdingsSummary.bondAmount / trackedMain,
+      equities: holdingsSummary.equityAmount / trackedMain
+    } : null;
     var cappedInvestable = Math.max(0, Math.min(raw.investableAssets, raw.currentCash));
+
     return {
       monthlyEssentialExpense: raw.monthlyEssentialExpense,
       currentCash: raw.currentCash,
@@ -233,7 +269,9 @@
       incomeStability: mapIncomeStability(),
       investmentExperience: mapExperience(),
       diversificationUnderstanding: mapDiversificationUnderstanding(),
-      expensePressure: mapExpensePressure(raw)
+      expensePressure: mapExpensePressure(raw),
+      existingAssets: existingAssets,
+      currentAllocation: currentAllocation
     };
   }
 
@@ -250,6 +288,11 @@
         qs(id).value = defaults[id];
       }
     });
+    ASSET_FIELD_IDS.forEach(function(id){
+      if(qs(id) && !qs(id).value){
+        qs(id).value = 0;
+      }
+    });
   }
 
   function renderRiskQuiz(){
@@ -257,7 +300,7 @@
     var count = Object.keys(riskAnswers).filter(function(key){ return riskAnswers[key] != null; }).length;
     qs("riskProgressLabel").textContent = count + " / 8";
     qs("riskProgressFill").style.width = (count / 8 * 100) + "%";
-    qs("riskQuizHint").textContent = progress.complete ? "测评完成，结果会按真实边界收敛。" : "题目没做完也能生成，但结果会按更保守的默认值处理。";
+    qs("riskQuizHint").textContent = progress.complete ? "测评完成，系统会结合你的选择、现金流和已有资产一起判断。" : "题目没做完也能生成，但系统会用更保守的默认值保护你。";
 
     qsa("[data-risk-question]").forEach(function(group){
       var question = group.getAttribute("data-risk-question");
@@ -267,23 +310,38 @@
     });
   }
 
+  function renderAssetSummary(){
+    var summary = buildCurrentHoldingsSummary(readExistingAssets());
+    qs("assetTotalTracked").textContent = formatCurrency(summary.totalTrackedAssets);
+    qs("assetCashPct").textContent = formatPercent(summary.cashLikePct, 0);
+    qs("assetBondPct").textContent = formatPercent(summary.bondPct, 0);
+    qs("assetEquityPct").textContent = formatPercent(summary.equityPct, 0);
+  }
+
   function renderRiskBars(level){
     var wrap = qs("riskBars");
     var bars = ["R1","R2","R3","R4","R5"];
-    var activeIndex = Math.max(bars.indexOf(level), 0);
+    var labels = [
+      "更适合把稳放在第一位",
+      "能承受一点波动",
+      "中间偏稳",
+      "可以承担更多波动",
+      "主观上更进取"
+    ];
     var widths = ["100%","88%","76%","64%","52%"];
+    var activeIndex = Math.max(bars.indexOf(level), 0);
 
     wrap.innerHTML =
       '<div class="paper-rails">' +
       bars.map(function(item, index){
-        return '<div class="paper-rail" style="width:' + widths[index] + '"><strong>' + escapeHtml(RISK_LEVEL_META[item].label) + "</strong></div>";
+        return '<div class="paper-rail" style="width:' + widths[index] + '"><strong>' + escapeHtml(labels[index]) + "</strong></div>";
       }).join("") +
       "</div>" +
       '<div class="paper-marker" style="left:' + (10 + activeIndex * 17) + '%">' + escapeHtml(level) + "</div>";
   }
 
   function updateStageGlyph(stage){
-    var key = (STAGE_META[stage] || STAGE_META.steady_accumulation).glyph;
+    var key = stageMeta(stage).glyph;
     qsa("[data-stage-dot]").forEach(function(dot){
       var dotKey = dot.getAttribute("data-stage-dot");
       var active = dotKey === key || (key === "growth" && dotKey === "extra");
@@ -315,42 +373,159 @@
     node.innerHTML = (items || []).map(makeCard).join("");
   }
 
-  function renderBuckets(plan, input){
-    var totalReference = Math.max(input.currentCash, plan.cashBuckets.livingBucket + plan.cashBuckets.stabilityBucket + plan.cashBuckets.growthBucket, 1);
+  function buildAggressiveReasons(plan){
+    var reasons = [];
+    if(plan.cashBuckets.growthEligibleAmount <= 0){
+      reasons.push("不是你不能投资，而是你现在真正可以拿去长期波动的钱还不多。");
+    } else if(plan.cashBuckets.growthEligibleAmount < Math.max(plan.input.currentCash * 0.2, 1)){
+      reasons.push("现在可以长期放着的钱占比还不高，所以系统会限制高波动资产的比例。");
+    }
+    if(plan.currentHoldingsSummary.totalTrackedAssets > 0 && plan.holdingsDiagnosis.status === "equity_too_high"){
+      reasons.push("你现在已经把比较多的钱放在高波动资产里了，后面更需要先稳住。");
+    }
+    if(plan.riskProfile.maxPortfolioDrawdownCap <= 0.12){
+      reasons.push("你大概能接受的下跌范围本来就不算大，更激进会更容易超出承受边界。");
+    }
+    reasons.push("理财最怕的不是短期赚得慢，而是要用钱时刚好碰上市场下跌，只能被迫卖掉。");
+    return dedupe(reasons).slice(0, 3);
+  }
+
+  function renderRiskNarrative(plan){
+    var estimatedDrawdown = estimateDrawdown(plan.assetAllocation.target);
+    var stage = stageMeta(plan.riskProfile.financialStage);
+
+    renderCardGrid("riskNarrative", [
+      {
+        title: "风险结论",
+        paragraphs: [
+          "你现在的整体风险等级是 " + plan.riskProfile.riskLevel + "（" + riskTag(plan.riskProfile.riskLevel).split(" · ")[1] + "）。这不是只看你敢不敢冒险，还会看你现在有没有足够现金、未来有没有要花的钱、这笔钱多久会用到。",
+          "你自己主观上愿意承担一定波动，但系统还会看你的现实情况。所以最终结果不是“你想多激进就多激进”，而是“你现在实际适合到哪一步”。",
+          "流动性压力：简单说，就是你最近会不会经常要动用这笔钱。压力越大，越不适合把钱放进波动大的资产里。",
+          "回撤上限：就是你看到账户下跌时，最多大概能接受到什么程度。"
+        ],
+        pills: [
+          "流动性压力：未来要花钱的压力有多大",
+          "回撤上限 " + formatPercent(plan.riskProfile.maxPortfolioDrawdownCap, 0) + "：你大概能接受的下跌范围"
+        ]
+      },
+      {
+        title: "你现在更适合哪种节奏",
+        paragraphs: [
+          "你现在处在 " + stage.label + "。意思不是已经可以大胆加仓，而是：你已经可以开始做一些配置，但前提是先把生活和已知支出照顾好。",
+          "这个阶段最重要的，不是追收益，而是先把边界守住。有些钱可以开始为以后增长做准备，但还不是“全力往高波动资产冲”的阶段。",
+          stage.chip + "：说明你已经不是“完全不能投”的状态了，但也还没到“可以很激进”的程度。",
+          "应急金约 " + plan.riskProfile.emergencyFundMonths + " 个月：意思是如果暂时没有新增收入，你手上的安全现金大概够支撑这么久的基本生活。"
+        ],
+        pills: [
+          stage.chip,
+          "应急金约 " + plan.riskProfile.emergencyFundMonths + " 个月"
+        ]
+      },
+      {
+        title: "为什么现在不建议更冲",
+        paragraphs: buildAggressiveReasons(plan).concat([
+          "目标波动约 -" + formatPercent(estimatedDrawdown, 1) + "：可以理解成，这套配置想控制在一个相对更稳的波动区间里。",
+          "不只是看主观偏好：你想冲是一回事，你现在能不能承受是另一回事，系统会更看后者。"
+        ]),
+        pills: [
+          "目标波动约 -" + formatPercent(estimatedDrawdown, 1),
+          "不只是看主观偏好"
+        ]
+      },
+      {
+        title: "接下来这些页面怎么看",
+        paragraphs: [
+          "后面不是在教你怎么买得更猛，而是在一步一步告诉你：哪些钱先别动、哪些钱可以留作稳一点的配置、真正适合拿去增长的钱有多少、现有持仓该不该调整。",
+          "你可以把后面理解成一条顺序：先留生活钱 → 再看稳妥的钱 → 最后才看增长怎么配。",
+          "分桶：就是先把钱按用途分开，而不是所有钱混在一起。",
+          "安全边界：就是系统设的安全线，比如短期要用的钱不要进股票。"
+        ],
+        pills: [
+          "先把钱按用途分开",
+          "结果跟着安全边界走"
+        ]
+      }
+    ]);
+  }
+
+  function renderHoldingsNarrative(plan){
+    var summary = plan.currentHoldingsSummary;
+    renderCardGrid("holdingsNarrative", [
+      {
+        title: "你现在的钱主要放在哪里",
+        paragraphs: [
+          "系统会先看你现在已经持有的资产，再决定后面是继续补安全垫，还是先调整比例。",
+          "这不是说你现在的配置一定错了，而是先看它和你当前阶段是否匹配。"
+        ],
+        pills: [
+          "当前现金类 " + formatPercent(summary.cashLikePct, 0),
+          "当前债券类 " + formatPercent(summary.bondPct, 0),
+          "当前股票类 " + formatPercent(summary.equityPct, 0),
+          "其他资产 " + formatPercent(summary.otherPct, 0)
+        ]
+      },
+      {
+        title: "你现在的持仓更像哪种情况",
+        paragraphs: [plan.holdingsDiagnosis.summary].concat(dedupe(plan.holdingsDiagnosis.details).slice(0, 2)),
+        pills: [
+          plan.holdingsDiagnosis.status === "cash_too_low" ? "稳的部分偏少" :
+          plan.holdingsDiagnosis.status === "equity_too_high" ? "股票比例偏高" :
+          plan.holdingsDiagnosis.status === "bond_too_low" ? "中间缓冲偏少" :
+          "整体大致匹配",
+          "会和建议比例一起比较"
+        ]
+      },
+      {
+        title: "系统会怎么用你现在的持仓继续算",
+        paragraphs: [
+          "后面的建议不会假设你是从零开始的，而是会一起看：你已经有多少现金、多少稳一点的资产、多少高波动资产、你离当前建议比例还差多少。",
+          "所以系统给你的不是模板答案，而是更接近“下一步该怎么动”的建议。"
+        ].concat(dedupe(plan.holdingsDiagnosis.actionHints).slice(0, 2)),
+        pills: [
+          "会比较当前比例和建议比例",
+          "先看下一步该怎么动"
+        ]
+      }
+    ]);
+  }
+
+  function renderBuckets(plan){
+    var targetBase = Math.max(plan.input.currentCash, plan.cashBuckets.livingBucket + plan.cashBuckets.stabilityBucket + plan.cashBuckets.growthBucket, 1);
     var items = [
       {
-        label: "生活桶",
+        label: "最近生活要用的钱",
         amount: plan.cashBuckets.livingBucket,
-        percent: plan.cashBuckets.livingBucket / totalReference,
+        percent: plan.cashBuckets.livingBucket / targetBase,
         color: "#6f8193",
-        hint: "先覆盖固定生活成本和近端日常支出，这部分不拿去承担市场波动。",
+        hint: "这部分钱最好先别动，主要是给吃住交通和最近的生活安排留出来。",
         pills: [
-          "目标 " + plan.cashBuckets.livingBucketTargetMonths + " 个月",
-          "优先级最高"
+          "大概留 " + plan.cashBuckets.livingBucketTargetMonths + " 个月",
+          "先保生活"
         ]
       },
       {
-        label: "稳定桶",
+        label: "这段时间内大概率会用到的钱",
         amount: plan.cashBuckets.stabilityBucket,
-        percent: plan.cashBuckets.stabilityBucket / totalReference,
+        percent: plan.cashBuckets.stabilityBucket / targetBase,
         color: "#8d9988",
-        hint: "承接 3 个月内确定支出和 12 个月内已知大额安排，避免股票被迫在低点卖出。",
+        hint: "可以理解成给学费、房租、换设备、旅行或其他已知支出留出来的缓冲层。",
         pills: [
-          "缓冲 " + plan.cashBuckets.stabilityBucketTargetMonths + " 个月",
-          "先照顾已知支出"
+          "大概看 " + plan.cashBuckets.stabilityBucketTargetMonths + " 个月",
+          "避免要用钱时被市场打断"
         ]
       },
       {
-        label: "增长桶",
+        label: "暂时用不上、可以拿去长期配置的钱",
         amount: plan.cashBuckets.growthBucket,
-        percent: plan.cashBuckets.growthBucket / totalReference,
+        percent: plan.cashBuckets.growthBucket / targetBase,
         color: "#bf8e40",
         hint: plan.cashBuckets.growthEligibleAmount > 0
-          ? "只有真正不用急着花的钱，才放进可以拉长周期的增长仓。"
-          : "当前增长桶先收缩为 0，等安全垫补足后再讨论更激进配置。",
+          ? "只有真正暂时不用急着花的钱，才适合慢慢放进更长期的配置里。"
+          : "结合你现在已有的持仓和现金情况，当前真正适合进入增长配置的钱仍然不多。"
+        ,
         pills: [
-          "安全可投 " + formatCurrency(plan.cashBuckets.growthEligibleAmount),
-          plan.cashBuckets.growthEligibleAmount > 0 ? "才进入配置" : "暂不进入配置"
+          "当前安全可投 " + formatCurrency(plan.cashBuckets.growthEligibleAmount),
+          plan.cashBuckets.growthEligibleAmount > 0 ? "可以开始慢慢配" : "先别急着加波动"
         ]
       }
     ];
@@ -370,189 +545,119 @@
     }).join("");
   }
 
+  function renderBucketNarrative(plan){
+    renderCardGrid("bucketNarrative", [
+      {
+        title: "为什么要先把钱按用途分开",
+        paragraphs: [
+          "不是所有钱都该承担同样的波动。先把生活钱和近期会用到的钱分出去，后面的建议才不会把你逼到要用钱时低位卖出。",
+          "你可以把这一步理解成：先把不会让你慌张的钱袋理出来，再看剩下的钱能不能走更远。"
+        ],
+        pills: [
+          "先留生活钱",
+          "再看长期钱"
+        ]
+      },
+      {
+        title: "结合你现在的持仓，这一步怎么看",
+        paragraphs: dedupe(plan.cashBuckets.notes).slice(0, 3),
+        pills: [
+          "当前安全可投 " + formatCurrency(plan.cashBuckets.growthEligibleAmount),
+          plan.holdingsDiagnosis.status === "cash_too_low" ? "现有稳的部分偏少" : "现有持仓也一起纳入"
+        ]
+      },
+      {
+        title: "为什么有些钱最好先别动",
+        paragraphs: [
+          "这不是说现金收益更好，而是这部分钱承担的是生活和确定支出的任务，不适合拿去冒市场波动。",
+          "先把这部分留住，后面稳一点的资产和增长类资产才不会乱。"
+        ],
+        pills: [
+          "生活和应急优先",
+          "避免要用钱时被动"
+        ]
+      },
+      {
+        title: "下一步会怎么接着算",
+        paragraphs: [
+          "后面系统会拿这三个用途和你现在已经持有的比例一起比较，判断你是应该补稳、补中间层，还是微调增长配置。",
+          "也就是说，后面看的不只是“理论上怎么配”，而是“结合你手上已经有的东西，下一步更适合怎么动”。"
+        ],
+        pills: [
+          "现有持仓也会一起算",
+          "不是从零开始"
+        ]
+      }
+    ]);
+  }
+
   function renderAllocation(plan){
     var target = plan.assetAllocation.target;
     qs("allocationList").innerHTML = [
-      { label: "现金 / 货基", value: target.cash, color: "#6f8193" },
-      { label: "债券 / 短中债", value: target.bonds, color: "#8d9988" },
-      { label: "股票 / 宽基ETF", value: target.equities, color: "#bf8e40" }
+      { label: "现金类", explain: "这部分钱最好先别动", value: target.cash, color: "#6f8193" },
+      { label: "稳一点的资产", explain: "主要是债券类，负责当中间缓冲层", value: target.bonds, color: "#8d9988" },
+      { label: "增长类资产", explain: "主要是股票类，适合更长期去看", value: target.equities, color: "#bf8e40" }
     ].map(function(item){
       return (
         '<div class="allocation-row">' +
-          "<span>" + escapeHtml(item.label) + "</span>" +
+          "<span>" + escapeHtml(item.label + " · " + item.explain) + "</span>" +
           '<div class="track"><span class="fill" style="width:' + (item.value * 100).toFixed(1) + '%;background:' + item.color + '"></span></div>' +
           "<strong>" + escapeHtml(formatPercent(item.value, 1)) + "</strong>" +
         "</div>"
       );
     }).join("");
 
-    var estimatedDrawdown = estimateDrawdown(target);
     qs("allocationPills").innerHTML = [
-      "阶段 " + stageLabel(plan.riskProfile.financialStage),
-      "回撤约 -" + formatPercent(estimatedDrawdown, 1),
-      "现金底线 " + formatPercent(target.cash, 1),
-      plan.assetAllocation.mptTarget ? "MPT 微调已启用" : "规则优先输出"
+      "你现在更适合 " + stageMeta(plan.riskProfile.financialStage).label,
+      "大概最多可能经历的下跌约 -" + formatPercent(estimateDrawdown(target), 1),
+      plan.holdingsDiagnosis.status === "well_aligned" ? "现有持仓和建议差得不算远" : "现有持仓会一起影响动作建议",
+      plan.assetAllocation.mptTarget ? "系统会在安全边界里做一点小优化" : "先按规则给更稳的结果"
     ].map(function(text){
       return '<span class="pill">' + escapeHtml(text) + "</span>";
     }).join("");
   }
 
-  function buildAggressiveReasons(plan){
-    var reasons = [];
-    var risk = plan.riskProfile;
-    var buckets = plan.cashBuckets;
-
-    if(risk.financialStage !== "growth_ready"){
-      reasons.push("你现在还处在" + stageLabel(risk.financialStage) + "，系统会先把安全垫和已知支出放在收益前面。");
-    }
-    if(buckets.growthEligibleAmount <= 0){
-      reasons.push("当前没有真正可以拉长周期的增长资金，所以权益仓位不会被放大。");
-    } else if(buckets.growthEligibleAmount < Math.max(plan.input.currentCash * 0.2, 1)){
-      reasons.push("增长桶占现金比例还不高，系统只允许小比例风险资产慢慢试错。");
-    }
-    if(risk.maxPortfolioDrawdownCap <= 0.10){
-      reasons.push("你的可接受回撤上限只有 " + formatPercent(risk.maxPortfolioDrawdownCap, 0) + "，更激进会直接越过承受边界。");
-    }
-    if(risk.objectiveCapacityScore + 8 < risk.subjectiveRiskScore){
-      reasons.push("你主观上能接受更多波动，但客观现金和支出条件更紧，所以结果会向保守端收敛。");
-    }
-    if(plan.assetAllocation.constraintsApplied.length){
-      reasons.push(plan.assetAllocation.constraintsApplied[0]);
-    }
-
-    return dedupe(reasons).slice(0, 3);
-  }
-
-  function renderRiskNarrative(plan){
-    var risk = plan.riskProfile;
-    var estimatedDrawdown = estimateDrawdown(plan.assetAllocation.target);
-    var stageNote = risk.notes[risk.notes.length - 1] || plan.summary.headline;
-
-    renderCardGrid("riskNarrative", [
-      {
-        title: "风险结论",
-        paragraphs: [
-          "当前有效风险分数是 " + Math.round(risk.effectiveRiskScore) + "，对应 " + riskLabel(risk.riskLevel) + "。",
-          "主观意愿 " + Math.round(risk.subjectiveRiskScore) + " 分，但系统更看重客观承受力 " + Math.round(risk.objectiveCapacityScore) + " 分。"
-        ],
-        pills: [
-          "流动性压力 " + Math.round(risk.liquidityStressScore) + " / 100",
-          "回撤上限 " + formatPercent(risk.maxPortfolioDrawdownCap, 0)
-        ]
-      },
-      {
-        title: "当前属于什么阶段",
-        paragraphs: [
-          plan.summary.headline,
-          stageNote
-        ],
-        pills: [
-          stageLabel(risk.financialStage),
-          "应急金 " + risk.emergencyFundMonths + " 个月"
-        ]
-      },
-      {
-        title: "为什么不能更激进",
-        paragraphs: buildAggressiveReasons(plan),
-        pills: [
-          "目标回撤约 -" + formatPercent(estimatedDrawdown, 1),
-          "不是只看主观偏好"
-        ]
-      },
-      {
-        title: "这页之后怎么读",
-        paragraphs: dedupe(plan.summary.diagnosis).slice(0, 2),
-        pills: [
-          "先分桶再配置",
-          "结果跟着约束走"
-        ]
-      }
-    ]);
-  }
-
-  function renderBucketNarrative(plan){
-    var buckets = plan.cashBuckets;
-    var notes = dedupe(buckets.notes.concat([
-      buckets.shortageToMinimumSafety > 0
-        ? "当前至少还差 " + formatCurrency(buckets.shortageToMinimumSafety) + " 才能把生活桶和稳定桶补到最低安全线。"
-        : "当前现金已经能覆盖最低安全线，可以开始考虑增长桶。"
-    ]));
-
-    renderCardGrid("bucketNarrative", [
-      {
-        title: "为什么这样分桶",
-        paragraphs: [
-          "学生阶段最怕的是还没到长期，就因为租房、学费、旅行或换设备被迫动用投资仓。",
-          "所以这里先把生活桶和稳定桶单独锁出来，增长桶只吃真正不用急着花的钱。"
-        ],
-        pills: [
-          "生活桶 " + buckets.livingBucketTargetMonths + " 个月",
-          "稳定桶 " + buckets.stabilityBucketTargetMonths + " 个月"
-        ]
-      },
-      {
-        title: "当前阶段的分桶信号",
-        paragraphs: notes.slice(0, 2),
-        pills: [
-          "增长可投 " + formatCurrency(buckets.growthEligibleAmount),
-          buckets.shortageToMinimumSafety > 0 ? "先补安全垫" : "可进入增长配置"
-        ]
-      },
-      {
-        title: "为什么先留现金",
-        paragraphs: [
-          "不是因为现金收益高，而是因为它能防止你在时间还没到的时候被市场波动打断。",
-          "只有现金边界清楚后，股票和债券的比例才有意义。"
-        ],
-        pills: [
-          "先保留流动性",
-          "避免被迫卖出"
-        ]
-      },
-      {
-        title: "新增资金优先顺序",
-        paragraphs: dedupe(plan.summary.behaviorAdvice).slice(0, 2),
-        pills: [
-          "先生活桶",
-          "再稳定桶"
-        ]
-      }
-    ]);
-  }
-
   function renderAllocationNarrative(plan){
     renderCardGrid("allocationNarrative", [
       {
-        title: "为什么这样配",
-        paragraphs: dedupe(plan.assetAllocation.rationale).slice(0, 2),
+        title: "为什么这样分",
+        paragraphs: [
+          "这一步先看你现在适合多大波动，再把钱拆成现金类、稳一点的资产和增长类资产。",
+          "后面的比例不是为了看起来专业，而是为了让你在要用钱的时候不容易被市场打断。"
+        ].concat(dedupe(plan.assetAllocation.rationale).slice(0, 2)),
         pills: [
-          "现金 " + formatPercent(plan.assetAllocation.target.cash, 1),
-          "债券 " + formatPercent(plan.assetAllocation.target.bonds, 1),
-          "股票 " + formatPercent(plan.assetAllocation.target.equities, 1)
+          "现金类 " + formatPercent(plan.assetAllocation.target.cash, 0),
+          "稳一点的资产 " + formatPercent(plan.assetAllocation.target.bonds, 0),
+          "增长类资产 " + formatPercent(plan.assetAllocation.target.equities, 0)
         ]
       },
       {
-        title: "约束怎么压住激进度",
-        paragraphs: dedupe(plan.assetAllocation.constraintsApplied).slice(0, 3),
+        title: "系统给你的安全边界",
+        paragraphs: [
+          "如果有些钱最近就会用到，或者你当前阶段还没完全站稳，系统就不会把它们放进更高波动的部分。"
+        ].concat(dedupe(plan.assetAllocation.constraintsApplied).slice(0, 3)),
         pills: [
-          "规则先于优化",
-          "先守现金底线"
+          "不是越激进越好",
+          "先守住底线"
         ]
       },
       {
-        title: "当前阶段下的解释",
-        paragraphs: dedupe(plan.summary.diagnosis).slice(0, 2),
+        title: "现有持仓会怎么影响这里",
+        paragraphs: [
+          plan.holdingsDiagnosis.summary,
+          "所以系统看的不是抽象比例，而是你手上已经有什么、离当前建议差多少。"
+        ].concat(dedupe(plan.holdingsDiagnosis.details).slice(0, 1)),
         pills: [
-          stageLabel(plan.riskProfile.financialStage),
-          "随阶段变化"
+          "当前持仓也一起比较",
+          "不是模板答案"
         ]
       },
       {
-        title: "新增资金怎么落地",
-        paragraphs: dedupe(plan.summary.behaviorAdvice).slice(0, 3),
+        title: "后续动作建议",
+        paragraphs: dedupe(plan.holdingsDiagnosis.actionHints.concat(plan.summary.behaviorAdvice)).slice(0, 3),
         pills: [
-          "按目标比例慢慢补",
-          "不要一次性冲满"
+          "优先用新增资金补短板",
+          "不用一次性全换"
         ]
       }
     ]);
@@ -565,51 +670,50 @@
 
     renderCardGrid("mptList", [
       {
-        title: "规则起点",
+        title: "系统先怎么定大方向",
         paragraphs: [
-          "这页先从 " + riskLabel(plan.riskProfile.riskLevel) + " 的基础大类资产起步，不先追求漂亮的数学最优。",
-          "先让阶段、现金安全垫和回撤上限把边界框出来。"
+          "系统不会一上来就算最花哨的比例，而是先看你当前阶段、现金流和已有持仓，把不能碰的边界先划出来。",
+          "这也是为什么它不会只听“你想不想冲”。"
         ],
         pills: [
-          "规则目标 现 " + formatPercent(simplified.cash, 0),
-          "债 " + formatPercent(simplified.bonds, 0) + " / 股 " + formatPercent(simplified.equities, 0)
+          "规则初稿：现金类 " + formatPercent(simplified.cash, 0),
+          "稳一点的资产 " + formatPercent(simplified.bonds, 0) + " / 增长类资产 " + formatPercent(simplified.equities, 0)
         ]
       },
       {
-        title: "分桶约束",
+        title: "什么叫在安全边界里做小幅优化",
         paragraphs: [
-          "如果生活桶和稳定桶还没补够，优化器不会把这部分钱偷去做更高波动配置。",
-          "所以这里的现金比例不是懒惰，而是被分桶和现金底线约束出来的。"
+          "可以理解成：先把生活钱、短期用钱和可接受下跌范围守住，再在这个小框里微调比例，让结果更顺一点。",
+          "不是为了算出最复杂的答案，而是为了避免明明条件不允许，却给你一个看起来很激进的漂亮数字。"
         ],
         pills: [
-          "阶段 " + stageLabel(plan.riskProfile.financialStage),
-          "现金底线优先"
+          "先守边界",
+          "再做微调"
         ]
       },
       {
-        title: "MPT 轻量微调",
+        title: "你现在的持仓为什么会影响这里",
+        paragraphs: [
+          "如果你现在已经偏稳、偏激进，或者中间缓冲层太薄，系统在微调时也会把这些现实情况一起带进去。",
+          "所以它不是只看问卷，还会看你现在的钱已经放在哪里。"
+        ],
+        pills: [
+          "当前持仓一起算",
+          "不是纸面建议"
+        ]
+      },
+      {
+        title: "最后给你的结果为什么更可执行",
         paragraphs: [
           mptTarget
-            ? "MPT-lite 只在规则允许的窄区间里微调，作用是细化，而不是推翻你的边界。"
-            : "当前没有启用额外微调，结果完全按规则约束输出。"
-        ],
-        pills: mptTarget ? [
-          "微调后 现 " + formatPercent(mptTarget.cash, 0),
-          "债 " + formatPercent(mptTarget.bonds, 0) + " / 股 " + formatPercent(mptTarget.equities, 0)
-        ] : [
-          "规则优先",
-          "不开极端解"
-        ]
-      },
-      {
-        title: "最终输出为什么可执行",
-        paragraphs: [
-          "最终配置把规则解放在前面、微调放在后面，所以不会出现看起来收益高、但学生阶段根本拿不住的极端权重。",
-          "这也是为什么不同用户不会再得到几乎一样的模板结果。"
+            ? "最后结果是在规则解的基础上再做一点小修整，所以既不会太死板，也不会冲得太过。"
+            : "当前阶段更需要规则优先，所以系统直接按更稳的边界输出结果。"
+          ,
+          "这也是为什么不同用户不会再得到几乎一样的模板答案。"
         ],
         pills: [
-          "最终 现 " + formatPercent(target.cash, 0),
-          "债 " + formatPercent(target.bonds, 0) + " / 股 " + formatPercent(target.equities, 0)
+          "最终：现金类 " + formatPercent(target.cash, 0),
+          "稳一点的资产 " + formatPercent(target.bonds, 0) + " / 增长类资产 " + formatPercent(target.equities, 0)
         ]
       }
     ]);
@@ -617,48 +721,51 @@
 
   function renderEquityRules(plan){
     var equity = plan.equityAllocation;
-    var equityShare = plan.assetAllocation.target.equities;
+    var existing = plan.input.existingAssets || {};
 
     renderCardGrid("stockRules", [
       {
-        title: "股票部分怎么拆",
+        title: "放在股票类资产里的比例怎么理解",
         paragraphs: [
-          "整个组合里股票约占 " + formatPercent(equityShare, 1) + "，其中 " + formatPercent(equity.broadIndex, 0) + " 的股票仓先放在宽基和规则型指数。",
-          "这样做的重点不是更花哨，而是先把个股和单一赛道风险压住。"
+          "股票类是增长类资产里最容易波动的一部分，所以这里不是在鼓励你去猜哪只股票涨，而是先看怎样把波动分散开。",
+          "系统当前建议把整个组合里大约 " + formatPercent(plan.assetAllocation.target.equities, 1) + " 放在股票类资产里。"
         ],
         pills: [
-          "宽基底仓 " + formatPercent(equity.broadIndex, 0),
-          "先分散后倾斜"
+          "增长类资产占比 " + formatPercent(plan.assetAllocation.target.equities, 0),
+          "先想能不能拿得住"
         ]
       },
       {
-        title: "地域分散",
+        title: "什么叫一篮子分散开的股票",
         paragraphs: [
-          "股票内部建议按地域拆开，避免看起来买了很多，实际都押在同一市场周期上。"
+          "可以理解成一次买很多公司，而不是押某一家公司。这样做的重点，是让一家公司出问题时，不会把整个组合拖得太厉害。",
+          "股票部分里大约 " + formatPercent(equity.broadIndex, 0) + " 会优先放在这种更分散的一篮子资产上。"
         ],
         pills: [
-          "中国 " + formatPercent(equity.china, 0),
-          "美国 " + formatPercent(equity.us, 0),
-          "发达市场 " + formatPercent(equity.developedExUS, 0),
-          "新兴市场 " + formatPercent(equity.emergingExChina, 0)
+          "更分散的一篮子股票 " + formatPercent(equity.broadIndex, 0),
+          "不是重押单一公司"
         ]
       },
       {
-        title: "风格倾向",
-        paragraphs: [
-          "你的偏好会影响股票仓更偏价值分红还是更偏成长，但这只是风格倾斜，不会推翻分散底层。"
+        title: existing.individualStocks > 0 ? "如果你现在已经有不少个股" : "如果你还没开始配股票",
+        paragraphs: existing.individualStocks > 0 ? [
+          "如果你现在已经持有较多个股，系统会提醒你先降低集中度，而不是继续往同一个方向加。",
+          "简单说，就是不要把太多钱压在同一个地方。"
+        ] : [
+          "如果你还没开始配置股票，默认建议从更分散的一篮子资产开始，而不是一上来就挑个股。",
+          "这样更适合刚起步、还在建立节奏的人。"
         ],
-        pills: [
-          "价值/分红 " + formatPercent(equity.valueDividendTilt, 0),
-          "成长 " + formatPercent(equity.growthTilt, 0)
-        ]
-      },
-      {
-        title: "集中度上限",
-        paragraphs: dedupe(equity.rules).slice(1, 3),
         pills: [
           "单一行业上限 " + formatPercent(equity.sectorTiltMax, 0),
-          "单一标的上限 " + formatPercent(equity.singleNameMax, 0)
+          "单一个股上限 " + formatPercent(equity.singleNameMax, 0)
+        ]
+      },
+      {
+        title: "后面系统会怎么提醒你别太集中",
+        paragraphs: dedupe(equity.rules).slice(0, 3),
+        pills: [
+          "先地域分散",
+          "再风格分散"
         ]
       }
     ]);
@@ -666,24 +773,23 @@
 
   function renderBondRules(plan){
     var bond = plan.bondAllocation;
-    var bondShare = plan.assetAllocation.target.bonds;
 
     renderCardGrid("bondRules", [
       {
-        title: "债券在组合里做什么",
+        title: "稳一点的资产在这里是做什么的",
         paragraphs: [
-          "整个组合里债券约占 " + formatPercent(bondShare, 1) + "，它的任务不是去抢收益，而是当股票和现金之间的缓冲层。",
-          "所以久期和信用等级会随着你的阶段与承受边界一起收敛。"
+          "你可以把它理解成组合里的中间缓冲层。它没有现金那么稳，也没有股票那么跳，主要任务是把体验拉平一点。",
+          "系统当前建议把整个组合里大约 " + formatPercent(plan.assetAllocation.target.bonds, 1) + " 放在这类资产上。"
         ],
         pills: [
-          "债券占比 " + formatPercent(bondShare, 0),
-          "先缓冲后增厚"
+          "稳一点的资产占比 " + formatPercent(plan.assetAllocation.target.bonds, 0),
+          "负责中间缓冲"
         ]
       },
       {
-        title: "久期节奏",
+        title: "债券对利率变化有多敏感，是什么意思",
         paragraphs: [
-          "短久期会更重，因为学生阶段要给未来支出留转身空间，中长久期只做少量补充。"
+          "简单说，越敏感，价格波动可能越大；越不敏感，一般越稳。所以系统会优先把更多比例放在不那么敏感的短久期部分。"
         ],
         pills: [
           "货基 " + formatPercent(bond.moneyMarket, 0),
@@ -693,55 +799,70 @@
         ]
       },
       {
-        title: "信用质量",
+        title: "信用更稳的债券，是什么意思",
         paragraphs: [
-          "这里默认先守高等级债，不鼓励为了多一点票息去承受你还没真正准备好的信用风险。"
+          "可以理解成违约风险更低、通常更适合做底层缓冲的债券。系统会优先给这种更稳的部分更高比例。"
         ],
         pills: [
-          "高等级占比 " + formatPercent(bond.highGrade, 0),
-          "低评级上限 " + formatPercent(bond.lowerGradeMax, 0)
+          "信用更稳的债券 " + formatPercent(bond.highGrade, 0),
+          "风险更高的债券上限 " + formatPercent(bond.lowerGradeMax, 0)
         ]
       },
       {
-        title: "为什么现在不能把债券做得更激进",
+        title: "如果你现在稳一点的资产偏少",
         paragraphs: dedupe(bond.rules).slice(0, 3),
         pills: [
-          stageLabel(plan.riskProfile.financialStage),
-          "保留流动性"
+          plan.holdingsDiagnosis.status === "bond_too_low" ? "你现在中间缓冲偏少" : "会一起参考现有持仓",
+          "不是只看问卷"
         ]
       }
     ]);
   }
 
   function renderConstraints(plan){
-    var reasons = dedupe(plan.assetAllocation.constraintsApplied.concat(plan.riskProfile.notes)).slice(0, 4);
-    var cards = reasons.map(function(text){
-      return {
-        title: "已触发约束",
-        paragraphs: [text],
-        pills: [
-          "动态生成",
-          "不是模板句子"
-        ]
-      };
-    });
-
-    while(cards.length < 4){
-      cards.push({
-        title: cards.length === 0 ? "当前约束" : "执行边界",
+    var items = [
+      {
+        title: "这部分钱最好先别动",
         paragraphs: [
-          cards.length === 0
-            ? "当前主要边界来自现金底线、可接受回撤、投资期限和增长桶占比。"
-            : "这些边界会随着输入条件变化，不同用户不会再走向几乎一样的答案。"
+          "这是给生活、应急和已知支出留出来的钱，不建议拿去冒波动。",
+          "系统会优先把这部分安全线守住，再去想增长怎么配。"
         ],
         pills: [
-          stageLabel(plan.riskProfile.financialStage),
-          riskLabel(plan.riskProfile.riskLevel)
+          "生活和应急优先",
+          "短期要用的钱先不进股票"
         ]
-      });
-    }
-
-    renderCardGrid("constraintRules", cards.slice(0, 4));
+      },
+      {
+        title: "你现在现实中能承受多少波动",
+        paragraphs: [
+          "系统最后不是只看你自己愿不愿意承担波动，还会看你的现金、支出、时间和已有资产一起判断。"
+        ].concat(dedupe(plan.riskProfile.notes).slice(0, 2)),
+        pills: [
+          "不是只看主观选择",
+          "会一起看现实条件"
+        ]
+      },
+      {
+        title: "不要把太多钱压在同一个地方",
+        paragraphs: [
+          "如果你现在已经有不少个股，或者股票类比例已经偏高，系统会更强调先把结构拉回到更分散的位置。",
+          "这样做不是让你变保守，而是避免一个判断错了就把组合拖得太重。"
+        ],
+        pills: [
+          "不要重压单一方向",
+          "先分散后增长"
+        ]
+      },
+      {
+        title: "为什么结果会跟着安全边界走",
+        paragraphs: dedupe(plan.assetAllocation.constraintsApplied).slice(0, 3),
+        pills: [
+          "结果先看能不能拿得住",
+          "不是算得最激进"
+        ]
+      }
+    ];
+    renderCardGrid("constraintRules", items);
   }
 
   function rebalanceThreshold(level){
@@ -755,50 +876,46 @@
 
   function renderRebalance(plan){
     var threshold = rebalanceThreshold(plan.riskProfile.riskLevel);
-    var items = [
+    renderCardGrid("rebalanceRules", [
       {
-        title: "再平衡触发线",
+        title: "什么时候把比例调回去",
         paragraphs: [
-          "当前风险等级下，系统会以大约 " + formatPercent(threshold, 0) + " 的偏离作为再平衡参考线。",
-          "不到线就不乱动，避免把长期策略做成短线操作。"
+          "如果股票涨太多、现金变太少，或者某一类和建议比例差太远，系统才会提醒你把比例拉回更稳的位置。",
+          "不到线就不乱动，避免把长期配置做成短线操作。"
         ],
         pills: [
-          "阈值 " + formatPercent(threshold, 0),
-          plan.riskProfile.riskLevel
+          "参考偏离线 " + formatPercent(threshold, 0),
+          "不是天天调"
         ]
       },
       {
-        title: "当前能不能直接给动作",
+        title: "你现在要不要调",
         paragraphs: dedupe(plan.rebalance.reasons).slice(0, 2),
         pills: [
-          plan.rebalance.shouldRebalance ? "需要再平衡" : "先记录持仓",
-          "先看偏离再动手"
+          plan.rebalance.shouldRebalance ? "已经偏离较多" : "暂时不用频繁调",
+          "会比较当前持仓"
         ]
       },
       {
-        title: "执行顺序",
-        paragraphs: dedupe(plan.rebalance.actions.concat([
-          "如果当前页面还没录入真实持仓，就先把再平衡理解成执行原则，而不是立刻下指令。"
-        ])).slice(0, 3),
+        title: "如果要动，先动哪里",
+        paragraphs: dedupe(plan.rebalance.actions).slice(0, 3),
         pills: [
-          "先补现金",
-          "再调债股"
+          "先补稳的部分",
+          "再看要不要动股票"
         ]
       },
       {
-        title: "为什么不建议频繁调",
+        title: "为什么不建议一次性全卖全买",
         paragraphs: [
-          "你现在的结果是按阶段、现金和回撤边界收敛出来的，频繁调仓容易把这些边界打乱。",
-          "只有偏离足够大或阶段发生变化时，再平衡才真正有意义。"
+          "大多数时候，更适合的做法是用新增资金去补短板，或者分批把过高的比例慢慢降下来。",
+          "这样更贴近真实生活，也更不容易做出情绪化动作。"
         ],
         pills: [
-          "避免过度交易",
-          "按节奏检查"
+          "分批更稳",
+          "新增资金也能调整结构"
         ]
       }
-    ];
-
-    renderCardGrid("rebalanceRules", items);
+    ]);
   }
 
   function unlockSpreads(){
@@ -814,8 +931,7 @@
     var input = buildPlannerInput();
     var mptConfig = defaultMPTConfig ? JSON.parse(JSON.stringify(defaultMPTConfig)) : { enabled: false };
     var plan = runStudentWealthPlanner(input, mptConfig);
-    var riskMeta = RISK_LEVEL_META[plan.riskProfile.riskLevel] || RISK_LEVEL_META.R3;
-    var stageMeta = STAGE_META[plan.riskProfile.financialStage] || STAGE_META.steady_accumulation;
+    var stage = stageMeta(plan.riskProfile.financialStage);
     var estimatedDrawdown = estimateDrawdown(plan.assetAllocation.target);
 
     plan.input = input;
@@ -823,21 +939,22 @@
     advisorState.plan = plan;
     advisorState.input = input;
 
-    qs("riskTag").textContent = riskMeta.tag;
-    qs("riskBarLabel").textContent = "主观 " + Math.round(plan.riskProfile.subjectiveRiskScore) + " · 客观 " + Math.round(plan.riskProfile.objectiveCapacityScore);
+    qs("riskTag").textContent = riskTag(plan.riskProfile.riskLevel);
+    qs("riskBarLabel").textContent = "它不是收益高低排名，而是系统综合判断你现在更适合站在哪个位置。";
     renderRiskBars(plan.riskProfile.riskLevel);
-    qs("riskPhase").textContent = stageMeta.label;
-    qs("riskPhaseReason").textContent = plan.summary.headline;
+    qs("riskPhase").textContent = stage.label;
+    qs("riskPhaseReason").textContent = "意思是：已经可以开始做一些配置，但前提是先把生活和已知支出照顾好。";
     updateStageGlyph(plan.riskProfile.financialStage);
     qs("riskScore").textContent = String(Math.round(plan.riskProfile.effectiveRiskScore));
-    qs("riskScoreHint").textContent = "题目意愿 " + Math.round(plan.riskProfile.subjectiveRiskScore) + " · 现金承受力 " + Math.round(plan.riskProfile.objectiveCapacityScore);
+    qs("riskScoreHint").textContent = "系统最后不是只听你主观选择，还会结合现金、支出、时间和已有资产一起判断。";
     qs("riskScoreGauge").querySelector(".score-ring").style.setProperty("--score", String(Math.round(plan.riskProfile.effectiveRiskScore)));
-    qs("riskEmergency").textContent = "应急金 " + plan.riskProfile.emergencyFundMonths + " 个月 · 上限 " + formatPercent(plan.riskProfile.maxPortfolioDrawdownCap, 0);
+    qs("riskEmergency").textContent = "应急金约 " + plan.riskProfile.emergencyFundMonths + " 个月 · 回撤上限 " + formatPercent(plan.riskProfile.maxPortfolioDrawdownCap, 0);
     qs("riskDrawdown").textContent = "约-" + formatPercent(estimatedDrawdown, 1);
     qs("riskDrawdown").style.left = clamp(estimatedDrawdown * 400, 14, 92) + "%";
 
     renderRiskNarrative(plan);
-    renderBuckets(plan, input);
+    renderHoldingsNarrative(plan);
+    renderBuckets(plan);
     renderBucketNarrative(plan);
     renderAllocation(plan);
     renderAllocationNarrative(plan);
@@ -847,7 +964,7 @@
     renderConstraints(plan);
     renderRebalance(plan);
     unlockSpreads();
-    GuguSite.showToast("结果已按真实字段重新生成。");
+    GuguSite.showToast("结果已按你的问卷、现金流和现有持仓一起更新。");
   }
 
   function scrollToSection(step){
@@ -906,6 +1023,14 @@
     });
   }
 
+  function bindAssetInputs(){
+    ASSET_FIELD_IDS.forEach(function(id){
+      var field = qs(id);
+      if(!field){return;}
+      field.addEventListener("input", renderAssetSummary);
+    });
+  }
+
   function bindPageTurns(){
     qsa("[data-next-step]").forEach(function(link){
       link.addEventListener("click", function(event){
@@ -934,11 +1059,13 @@
     if(!qs("advisorPage")){return;}
     populateFields();
     bindRiskQuiz();
+    bindAssetInputs();
     bindPageTurns();
     bindStepScrollSync();
     renderRiskQuiz();
+    renderAssetSummary();
     renderRiskBars("R3");
-    updateStageGlyph("steady_accumulation");
+    updateStageGlyph("growth_ready");
     switchDiversify("stock");
     switchExecution("split");
 

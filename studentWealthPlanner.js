@@ -119,6 +119,52 @@
     return "growth_ready";
   }
 
+  function readAsset(existingAssets, key){
+    return Math.max(0, Number(existingAssets && existingAssets[key] || 0));
+  }
+
+  function buildCurrentHoldingsSummary(existingAssets){
+    var assets = existingAssets || {};
+    var cashLikeAmount =
+      readAsset(assets, "bankCash") +
+      readAsset(assets, "walletCash") +
+      readAsset(assets, "moneyMarketFunds");
+    var bondAmount =
+      readAsset(assets, "bondFunds") +
+      readAsset(assets, "bondsFixedIncome");
+    var equityAmount =
+      readAsset(assets, "individualStocks") +
+      readAsset(assets, "stockFunds") +
+      readAsset(assets, "etfIndexFunds");
+    var otherAmount = readAsset(assets, "otherAssets");
+    var totalTrackedAssets = cashLikeAmount + bondAmount + equityAmount + otherAmount;
+    var divisor = totalTrackedAssets > 0 ? totalTrackedAssets : 1;
+
+    return {
+      totalTrackedAssets: round2(totalTrackedAssets),
+      cashLikeAmount: round2(cashLikeAmount),
+      bondAmount: round2(bondAmount),
+      equityAmount: round2(equityAmount),
+      otherAmount: round2(otherAmount),
+      cashLikePct: round2(cashLikeAmount / divisor),
+      bondPct: round2(bondAmount / divisor),
+      equityPct: round2(equityAmount / divisor),
+      otherPct: round2(otherAmount / divisor)
+    };
+  }
+
+  function deriveCurrentAllocation(summary){
+    var trackedMain = summary.cashLikeAmount + summary.bondAmount + summary.equityAmount;
+    if(trackedMain <= 0){
+      return null;
+    }
+    return normalizeAllocation({
+      cash: summary.cashLikeAmount / trackedMain,
+      bonds: summary.bondAmount / trackedMain,
+      equities: summary.equityAmount / trackedMain
+    });
+  }
+
   function buildRiskProfile(input){
     var notes = [];
     var eMonths = emergencyMonths(input.currentCash, input.monthlyEssentialExpense);
@@ -148,15 +194,15 @@
 
     if (eMonths < 1) {
       objectiveCapacityScore = Math.min(objectiveCapacityScore, 20);
-      notes.push("应急金不足 1 个月，客观承受能力被强制压低。");
+      notes.push("你手上的安全现金不到 1 个月生活费，系统会自动把风险上限压低。");
     }
     if (input.investmentHorizon === "lt_3m") {
       objectiveCapacityScore = Math.min(objectiveCapacityScore, 15);
-      notes.push("投资期限不足 3 个月，不适合承担股票波动。");
+      notes.push("这笔钱太快会用到，不适合放进容易波动的资产。");
     }
     if (input.shortTermExpense3m > input.currentCash * 0.7) {
       objectiveCapacityScore = Math.min(objectiveCapacityScore, 25);
-      notes.push("3 个月内支出占当前现金比例较高，先保流动性。");
+      notes.push("你最近 3 个月要花的钱占现在现金比例比较高，先保流动性更重要。");
     }
 
     var effectiveRiskScore = round2(subjectiveRiskScore * 0.40 + objectiveCapacityScore * 0.60);
@@ -184,11 +230,11 @@
     if (riskLevel === "R4") maxPortfolioDrawdownCap = Math.min(maxPortfolioDrawdownCap, 0.18);
 
     if (financialStage === "cash_repair") {
-      notes.push("当前阶段优先补足安全垫，不建议把主要精力放在收益最大化。");
+      notes.push("你现在更像是在补安全垫，不适合把主要精力放在追收益上。");
     } else if (financialStage === "steady_accumulation") {
-      notes.push("当前可以做配置，但仍需先照顾未来支出。");
+      notes.push("你已经可以开始做配置，但还是要先照顾接下来会用到的钱。");
     } else {
-      notes.push("已经具备进入增长配置阶段的基本条件。");
+      notes.push("你已经不是完全不能投的状态，但也要先守住生活和已知支出。");
     }
 
     return {
@@ -204,7 +250,7 @@
     };
   }
 
-  function buildCashBuckets(input, risk){
+  function buildCashBuckets(input, risk, holdingsSummary){
     var notes = [];
 
     var livingBucketTargetMonths =
@@ -228,7 +274,7 @@
     if (input.expensePressure === "very_high") {
       livingBucket += input.monthlyEssentialExpense * 0.5;
       stabilityBucket += input.monthlyEssentialExpense * 0.5;
-      notes.push("未来支出压力高，现金桶额外上调。");
+      notes.push("最近会用到的钱不少，所以系统把要先留住的部分又抬高了一些。");
     }
 
     var requiredMinimumSafety = livingBucket + stabilityBucket;
@@ -236,15 +282,18 @@
     var growthBucket = Math.max(0, input.currentCash - requiredMinimumSafety);
 
     if (shortageToMinimumSafety > 0) {
-      notes.push("当前现金不足以同时覆盖生活桶与稳定桶，增长桶设为 0。");
+      notes.push("你现在的现金还不够同时覆盖生活和近阶段要用的钱，能长期拿去波动的部分先收紧。");
     }
 
     var growthEligibleAmount = Math.min(growthBucket, input.investableAssets);
+    if (holdingsSummary && holdingsSummary.cashLikeAmount < livingBucket) {
+      notes.push("结合你现在已经持有的资产来看，真正稳的部分还不算厚，后面的建议会更偏稳。");
+    }
 
     if (growthEligibleAmount <= 0) {
-      notes.push("当前没有可进入增长配置的安全资金。");
+      notes.push("当前真正适合进入长期配置的钱还不多。");
     } else if (growthEligibleAmount < input.currentCash * 0.2) {
-      notes.push("增长桶占比较小，应以稳健配置为主。");
+      notes.push("能拿去长期配置的钱占比还不高，所以增长部分会先放小一点。");
     }
 
     return {
@@ -280,7 +329,7 @@
 
     if (risk.financialStage === "cash_repair") {
       result = { cash: 0.85, bonds: 0.15, equities: 0.00 };
-      constraintsApplied.push("现金修复期：股票仓位强制降为 0。");
+      constraintsApplied.push("你现在还在先补稳的阶段，所以增长类资产的比例被强制压到很低。");
       return { result: result, constraintsApplied: constraintsApplied };
     }
 
@@ -289,37 +338,37 @@
     if (growthShare < 0.10) {
       result.equities = Math.min(result.equities, 0.10);
       result.cash = Math.max(result.cash, 0.55);
-      constraintsApplied.push("增长桶占比很低：权益仓位限制在 10% 以内。");
+      constraintsApplied.push("真正可以长期放着的钱占比很低，所以系统不让股票类资产超过 10%。");
     } else if (growthShare < 0.20) {
       result.equities = Math.min(result.equities, 0.20);
       result.cash = Math.max(result.cash, 0.40);
-      constraintsApplied.push("增长桶占比偏低：权益仓位限制在 20% 以内。");
+      constraintsApplied.push("可以长期放着的钱还不多，所以增长类资产比例被限制在更小的范围里。");
     }
 
     if (input.investmentHorizon === "3m_1y") {
       result.equities = Math.min(result.equities, 0.15);
       result.cash = Math.max(result.cash, 0.45);
-      constraintsApplied.push("投资期限 3-12 个月：权益仓位显著下调。");
+      constraintsApplied.push("这笔钱 1 年内就可能要用，所以更容易波动的部分被明显下调。");
     } else if (input.investmentHorizon === "1y_3y") {
       result.equities = Math.min(result.equities, 0.35);
-      constraintsApplied.push("投资期限 1-3 年：权益仓位上限 35%。");
+      constraintsApplied.push("这笔钱不是特别长的钱，增长类资产上限先压在 35%。");
     }
 
     if (risk.maxPortfolioDrawdownCap <= 0.05) {
       result.equities = Math.min(result.equities, 0.08);
       result.cash = Math.max(result.cash, 0.55);
-      constraintsApplied.push("最大可接受回撤 <= 5%：权益仓位上限 8%。");
+      constraintsApplied.push("你能接受的下跌范围比较小，所以系统会把高波动资产压得更低。");
     } else if (risk.maxPortfolioDrawdownCap <= 0.10) {
       result.equities = Math.min(result.equities, 0.20);
-      constraintsApplied.push("最大可接受回撤 <= 10%：权益仓位上限 20%。");
+      constraintsApplied.push("你可接受的下跌大概在 10% 以内，所以系统不会给太高的股票比例。");
     } else if (risk.maxPortfolioDrawdownCap <= 0.15) {
       result.equities = Math.min(result.equities, 0.35);
-      constraintsApplied.push("最大可接受回撤 <= 15%：权益仓位上限 35%。");
+      constraintsApplied.push("你愿意接受一定波动，但系统还是会把增长类资产控制在更稳的区间里。");
     }
 
     if (input.investmentExperience === "none") {
       result.equities = Math.min(result.equities, 0.30);
-      constraintsApplied.push("无投资经验：权益仓位上限 30%。");
+      constraintsApplied.push("如果你还没真正做过投资，系统会避免一上来给太高的股票比例。");
     }
 
     var safetyCashFloor = input.currentCash > 0
@@ -327,7 +376,7 @@
       : 1;
 
     result.cash = Math.max(result.cash, Math.min(safetyCashFloor, 0.85));
-    constraintsApplied.push("现金底线来自分桶安全垫：至少保留 " + pct(Math.min(safetyCashFloor, 0.85)) + "。");
+    constraintsApplied.push("生活和近阶段要用的钱会先被留出来，这部分钱最好先别动。");
 
     result = normalizeAllocation(result);
     result.equities = Math.min(result.equities, 0.75);
@@ -378,14 +427,14 @@
     return normalizeAllocation(best);
   }
 
-  function buildAssetAllocation(input, risk, buckets, mptConfig){
+  function buildAssetAllocation(input, risk, buckets, holdingsSummary, mptConfig){
     var rationale = [];
     var simplifiedBase = baseAllocationByRisk(risk.riskLevel);
     var constrained = applyStudentConstraints(simplifiedBase, input, risk, buckets);
     var mptTarget;
 
-    rationale.push("以 " + risk.riskLevel + " 的基础配置为起点，再根据学生阶段的流动性约束做调整。");
-    rationale.push("先满足生活桶和稳定桶，再让增长桶进入股票和债券配置。");
+    rationale.push("系统会先看你现在适合承担多大波动，再决定现金、稳一点的资产和增长类资产分别放多少。");
+    rationale.push("不是所有钱都一起上场，先照顾生活和已知支出，再安排真正能长期放着的钱。");
 
     if (
       mptConfig &&
@@ -413,7 +462,7 @@
         covariance: mptConfig.covariance
       });
 
-      rationale.push("MPT-lite 只在规则边界内微调，不允许优化器给出极端权重。");
+      rationale.push("系统会在安全边界里做一点点顺手的微调，但不会为了好看把比例算得太激进。");
     }
 
     var finalTarget = mptTarget ? normalizeAllocation({
@@ -423,10 +472,13 @@
     }) : constrained.result;
 
     if (input.currentCash < input.monthlyEssentialExpense * 2) {
-      rationale.push("当前现金覆盖月数偏低，整体组合继续偏保守。");
+      rationale.push("你手上的安全现金不算多，所以整体配置还会偏稳一些。");
+    }
+    if (holdingsSummary && holdingsSummary.totalTrackedAssets > 0) {
+      rationale.push("这次建议不是把你当成从零开始，也会一起参考你现在已经持有的资产比例。");
     }
     if (input.investmentExperience === "none" || input.investmentExperience === "beginner") {
-      rationale.push("新手优先规则化分散，而不是集中押注单一个股。");
+      rationale.push("如果你还在起步阶段，系统会更偏向分散，而不是鼓励集中押一个方向。");
     }
 
     return {
@@ -438,7 +490,7 @@
     };
   }
 
-  function buildEquityAllocation(input, risk, assetAllocation){
+  function buildEquityAllocation(input, risk, assetAllocation, holdingsSummary){
     var rules = [];
     var broadIndex =
       risk.riskLevel === "R1" ? 1.0 :
@@ -485,10 +537,17 @@
       input.investmentExperience === "intermediate" ? 0.05 :
       0.03;
 
-    rules.push("股票部分的 " + pct(broadIndex) + " 默认放入宽基和规则型指数资产。");
-    rules.push("单一行业上限 " + pct(sectorTiltMax) + "，避免表面分散、实则同一赛道。");
-    rules.push("单一标的上限 " + pct(singleNameMax) + "，新手不建议重仓个股。");
-    rules.push("优先做地域分散和风格分散，再考虑少量主题倾斜。");
+    rules.push("股票部分会优先用一篮子分散开的股票来打底，而不是一开始就重压几家公司。");
+    rules.push("同一个行业不建议压太多，避免看起来分散了，实际还是在押同一个方向。");
+    rules.push("单一个股的比例会被压得比较小，特别是你还在起步阶段时更是这样。");
+    rules.push("先把地域和风格分开，再考虑要不要做少量主题倾斜。");
+
+    if (input.existingAssets && readAsset(input.existingAssets, "individualStocks") > 0) {
+      rules.push("如果你现在已经持有较多个股，系统会更强调先把集中度降下来，而不是继续堆个股。");
+    }
+    if (holdingsSummary && holdingsSummary.equityPct > assetAllocation.equities + 0.08) {
+      rules.push("你现在股票类占比已经偏高，后面的建议会更偏向先稳住，而不是继续往高波动资产加。");
+    }
 
     return {
       broadIndex: round2(broadIndex),
@@ -500,12 +559,11 @@
       growthTilt: round2(growthTilt),
       sectorTiltMax: round2(sectorTiltMax),
       singleNameMax: round2(singleNameMax),
-      rules: rules,
-      equityShareOfPortfolio: round2(assetAllocation.equities)
+      rules: rules
     };
   }
 
-  function buildBondAllocation(input, risk, assetAllocation){
+  function buildBondAllocation(input, risk, assetAllocation, holdingsSummary){
     var rules = [];
     var moneyMarket = 0.20;
     var shortDuration = 0.55;
@@ -521,7 +579,7 @@
       longDuration = 0.00;
       highGrade = 0.95;
       lowerGradeMax = 0.00;
-      rules.push("短期限或低风险用户：债券部分以货币、短久期和高等级为主。");
+      rules.push("这部分会优先放在更稳、对利率变化不那么敏感的债券类资产里。");
     } else if (risk.riskLevel === "R2" || risk.riskLevel === "R3") {
       moneyMarket = 0.20;
       shortDuration = 0.55;
@@ -529,7 +587,7 @@
       longDuration = 0.05;
       highGrade = 0.90;
       lowerGradeMax = 0.05;
-      rules.push("稳健型用户：维持短久期为主，少量中久期。");
+      rules.push("稳一点的资产会以短久期为主，也就是价格通常没那么容易大起大落。");
     } else if (risk.riskLevel === "R4" || risk.riskLevel === "R5") {
       moneyMarket = 0.10;
       shortDuration = 0.45;
@@ -537,19 +595,23 @@
       longDuration = 0.15;
       highGrade = 0.85;
       lowerGradeMax = 0.10;
-      rules.push("较长投资期限且进入增长阶段后，可少量增加中长久期，但不宜过重。");
+      rules.push("如果你的时间更长、阶段也更稳，才会少量放一些波动更大的中长久期债。");
     }
 
     if (input.investmentExperience === "none" || input.investmentExperience === "beginner") {
       longDuration = Math.min(longDuration, 0.05);
       lowerGradeMax = Math.min(lowerGradeMax, 0.05);
-      rules.push("新手限制长久期与低评级债暴露。");
+      rules.push("如果你刚开始做配置，系统会减少长久期和高风险债的比例。");
     }
 
     if (risk.financialStage !== "growth_ready") {
       moneyMarket = Math.max(moneyMarket, 0.25);
       longDuration = Math.min(longDuration, 0.05);
-      rules.push("未进入完全增长阶段：债券部分保留更高流动性。");
+      rules.push("你现在还不是完全可以放手增长的阶段，所以稳一点的资产会保留更高流动性。");
+    }
+
+    if (holdingsSummary && holdingsSummary.bondPct < assetAllocation.bonds - 0.08) {
+      rules.push("你现在稳一点的中间层偏少，所以系统会提醒你把现金和股票之间先补出一层缓冲。");
     }
 
     return {
@@ -559,28 +621,105 @@
       longDuration: round2(longDuration),
       highGrade: round2(highGrade),
       lowerGradeMax: round2(lowerGradeMax),
-      rules: rules,
-      bondShareOfPortfolio: round2(assetAllocation.bonds)
+      rules: rules
     };
   }
 
-  function buildRebalanceSuggestion(input, risk, target){
-    var reasons = [];
-    var actions = [];
-
-    if (!input.currentAllocation) {
+  function buildHoldingsDiagnosis(holdingsSummary, target, risk, buckets){
+    if (!holdingsSummary || holdingsSummary.totalTrackedAssets <= 0) {
       return {
-        shouldRebalance: false,
-        reasons: ["没有当前持仓数据，暂不生成再平衡动作。"],
-        actions: ["先录入当前现金、债券、股票实际比例。"]
+        status: "well_aligned",
+        summary: "你还没有录入明显的已有资产，后面的建议会先按“从零开始配置”来理解。",
+        details: [
+          "等你把现在已经持有的钱填进去，系统才会进一步判断你现在是偏稳、偏激进，还是比例失衡。"
+        ],
+        actionHints: [
+          "如果你已经有持仓，建议把它们录进来，后面的动作建议会更具体。"
+        ]
       };
     }
 
-    var current = normalizeAllocation({
+    var details = [];
+    var actionHints = [];
+    var cashGap = round2(holdingsSummary.cashLikePct - target.cash);
+    var bondGap = round2(holdingsSummary.bondPct - target.bonds);
+    var equityGap = round2(holdingsSummary.equityPct - target.equities);
+    var absoluteMainGap = Math.abs(equityGap) + Math.abs(bondGap) + Math.abs(cashGap);
+    var status = "well_aligned";
+    var summary = "你现在的持仓和当前阶段大致匹配，后面主要是微调。";
+
+    details.push(
+      "你现在现金类约 " + pct(holdingsSummary.cashLikePct) +
+      "，稳一点的资产约 " + pct(holdingsSummary.bondPct) +
+      "，增长类资产约 " + pct(holdingsSummary.equityPct) + "。"
+    );
+    details.push(
+      "系统当前建议大致是：现金类 " + pct(target.cash) +
+      "，稳一点的资产 " + pct(target.bonds) +
+      "，增长类资产 " + pct(target.equities) + "。"
+    );
+
+    if (holdingsSummary.cashLikePct < target.cash - 0.08) {
+      status = "cash_too_low";
+      summary = "你现在手上真正稳的部分偏少，后面更容易被支出和波动打断。";
+      actionHints.push("新增资金优先补现金和活期类，不建议继续往高波动资产加。");
+      actionHints.push("如果要调，先把生活和近期会用到的钱补到更安心的位置。");
+    } else if (holdingsSummary.equityPct > target.equities + 0.08) {
+      status = "equity_too_high";
+      summary = "你现在股票类资产偏高，和你当前阶段不太匹配。";
+      actionHints.push("如果要调整，先从降低过高的股票比例开始。");
+      actionHints.push("不需要一次性全卖全买，可以先停掉新增股票，把后续资金补到短板上。");
+    } else if (
+      holdingsSummary.bondPct < target.bonds - 0.08 &&
+      holdingsSummary.equityPct > 0.10 &&
+      holdingsSummary.cashLikePct > 0.10
+    ) {
+      status = "bond_too_low";
+      summary = "你现在更像是“现金 + 股票”的结构，中间那层缓冲不太够。";
+      actionHints.push("后续新增资金可以优先补稳一点的资产，让组合没那么跳。");
+      actionHints.push("这样做不是为了保守，而是减少你心理上和现金流上的颠簸。");
+    } else if (absoluteMainGap > 0.18) {
+      summary = "你现在不是没在理财，而是比例还没有整理清楚。";
+      actionHints.push("先用新增资金补短板，再决定是否需要主动调整已有持仓。");
+    } else {
+      actionHints.push("后续更多是看怎么微调，而不是大改。");
+      actionHints.push("新增资金按目标比例慢慢补，就比频繁折腾更有效。");
+    }
+
+    if (risk.financialStage !== "growth_ready") {
+      actionHints.push("你现在还不属于可以很激进的阶段，所以动作顺序仍然是先稳住，再考虑增长。");
+    }
+    if (buckets.growthEligibleAmount <= 0) {
+      actionHints.push("结合你当前现金和持仓，真正适合进入长期配置的钱还不多，先补安全垫更重要。");
+    }
+    if (holdingsSummary.otherAmount > 0) {
+      details.push("你还有一部分“其他资产”，它会单独显示，默认不直接并入主配置比较。");
+    }
+
+    return {
+      status: status,
+      summary: summary,
+      details: details,
+      actionHints: actionHints
+    };
+  }
+
+  function buildRebalanceSuggestion(input, risk, target, holdingsSummary){
+    var reasons = [];
+    var actions = [];
+    var current = input.currentAllocation ? normalizeAllocation({
       cash: input.currentAllocation.cash || 0,
       bonds: input.currentAllocation.bonds || 0,
       equities: input.currentAllocation.equities || 0
-    });
+    }) : deriveCurrentAllocation(holdingsSummary);
+
+    if (!current) {
+      return {
+        shouldRebalance: false,
+        reasons: ["还没有足够的现有持仓数据，所以这一步先只给原则，不直接给调仓动作。"],
+        actions: ["把你现在已有的现金类、债券类、股票类录进去后，这里就会开始比较偏差。"]
+      };
+    }
 
     var drift = {
       cash: round2(current.cash - target.cash),
@@ -600,8 +739,8 @@
       Math.abs(drift.equities) > threshold;
 
     if (!needs) {
-      reasons.push("当前偏离度未超过 " + pct(threshold) + " 阈值。");
-      actions.push("维持现有配置，按月检查即可。");
+      reasons.push("你现在的比例和建议值没有偏太远，暂时不需要频繁去调。");
+      actions.push("先维持现有比例，按月看一下就够了。");
       return {
         shouldRebalance: false,
         reasons: reasons,
@@ -610,22 +749,22 @@
       };
     }
 
-    reasons.push("当前持仓至少一个大类资产偏离目标超过 " + pct(threshold) + "。");
+    reasons.push("你现在至少有一类资产和建议比例偏离超过 " + pct(threshold) + "。");
 
     if (drift.cash < -threshold) {
-      actions.push("先补回现金安全垫，再考虑增加风险资产。");
+      actions.push("先把稳的部分补回来，再考虑要不要增加高波动资产。");
     }
     if (drift.equities > threshold) {
-      actions.push("股票仓位高于目标，分批降低权益，优先回到债券或现金。");
+      actions.push("股票类现在偏高，如果要调，优先从这里慢慢降。");
     }
     if (drift.equities < -threshold && risk.financialStage === "growth_ready") {
-      actions.push("权益仓位低于目标，可分批补至目标，不建议一次性加满。");
+      actions.push("如果你已经进入可以增长的阶段，股票类偏低时可以分批补，不需要一次性冲满。");
     }
     if (drift.bonds > threshold) {
-      actions.push("债券比例偏高，可根据目标逐步转回现金或权益。");
+      actions.push("稳一点的资产偏多时，可以把新增资金更多补到现金或增长类短板上。");
     }
     if (risk.financialStage !== "growth_ready") {
-      actions.push("由于当前不属于完全增长阶段，再平衡优先方向是回补现金，而不是提高股票。");
+      actions.push("你现在还不属于可以很激进的阶段，所以调仓优先顺序仍然是先稳住，而不是先加股票。");
     }
 
     return {
@@ -636,44 +775,53 @@
     };
   }
 
-  function generateSummary(input, risk, buckets, allocation){
+  function generateSummary(input, risk, buckets, allocation, holdingsSummary, holdingsDiagnosis){
     var diagnosis = [];
     var behaviorAdvice = [];
     var headline =
-      risk.financialStage === "cash_repair" ? "当前重点：先修复现金安全垫" :
-      risk.financialStage === "steady_accumulation" ? "当前重点：稳健积累，不急着把风险开大" :
-      "当前重点：可以进入增长配置，但仍要守住边界";
+      risk.financialStage === "cash_repair" ? "当前重点：先修复生活和应急用的钱" :
+      risk.financialStage === "steady_accumulation" ? "当前重点：先稳住，再慢慢往增长靠" :
+      "当前重点：已经可以开始配置，但前提是先把边界守住";
 
     if (risk.emergencyFundMonths < 3) {
-      diagnosis.push("你的应急金约覆盖 " + risk.emergencyFundMonths + " 个月，低于更稳妥的 3 个月线。");
+      diagnosis.push("你手上的安全现金大概只够 " + risk.emergencyFundMonths + " 个月基本生活，离更安心的线还有一点距离。");
     } else {
-      diagnosis.push("你的应急金约覆盖 " + risk.emergencyFundMonths + " 个月，已经有一定缓冲。");
+      diagnosis.push("你手上的安全现金大概能撑 " + risk.emergencyFundMonths + " 个月基本生活，已经有一定缓冲。");
     }
 
     if (buckets.growthEligibleAmount <= 0) {
-      diagnosis.push("当前没有足够安全的增长桶资金，所以投资建议会非常保守。");
+      diagnosis.push("结合你现在已有的持仓和现金情况，当前真正适合进入增长配置的钱仍然不多，所以后面的建议会偏稳。");
     } else {
-      diagnosis.push("当前可进入增长配置的安全资金约为 " + round2(buckets.growthEligibleAmount) + "。");
+      diagnosis.push("当前真正能拿去做长期配置的钱大概有 " + round2(buckets.growthEligibleAmount) + "。");
+    }
+
+    if (holdingsSummary && holdingsSummary.totalTrackedAssets > 0) {
+      diagnosis.push(holdingsDiagnosis.summary);
     }
 
     diagnosis.push(
-      "最终大类资产建议为：现金 " + pct(allocation.target.cash) +
-      " / 债券 " + pct(allocation.target.bonds) +
-      " / 股票 " + pct(allocation.target.equities) + "。"
+      "这次系统最终建议大致是：现金类 " + pct(allocation.target.cash) +
+      " / 稳一点的资产 " + pct(allocation.target.bonds) +
+      " / 增长类资产 " + pct(allocation.target.equities) + "。"
     );
 
-    if (input.investmentExperience === "none" || input.investmentExperience === "beginner") {
-      behaviorAdvice.push("先把分散和纪律做好，比追热点更重要。");
-      behaviorAdvice.push("股票部分默认先用宽基和规则型分散，不建议从重仓个股开始。");
+    if (input.existingAssets && readAsset(input.existingAssets, "individualStocks") > 0) {
+      behaviorAdvice.push("如果你现在已经持有较多个股，后面优先做的是降低集中度，而不是再继续加同一类资产。");
+    } else {
+      behaviorAdvice.push("如果你还没开始配置股票，默认建议从更分散的一篮子资产开始。");
+    }
+
+    if (holdingsSummary && holdingsSummary.totalTrackedAssets > 0) {
+      behaviorAdvice = behaviorAdvice.concat(holdingsDiagnosis.actionHints);
     }
 
     if (risk.financialStage !== "growth_ready") {
-      behaviorAdvice.push("近期新增资金优先补生活桶和稳定桶。");
+      behaviorAdvice.push("后续新增资金优先补生活和稳的部分，不用急着把增长类资产冲高。");
     } else {
-      behaviorAdvice.push("新增资金可优先按目标比例定投，而不是一次性押注。");
+      behaviorAdvice.push("如果后续要继续加，优先按建议比例慢慢补，不用一次性全上。");
     }
 
-    behaviorAdvice.push("只有超过再平衡阈值时才调整，避免频繁操作。");
+    behaviorAdvice.push("后面的建议不会把你当成从零开始，而是会看你现在已经有多少现金、多少稳的资产、多少高波动资产。");
 
     return {
       headline: headline,
@@ -683,13 +831,18 @@
   }
 
   function runStudentWealthPlanner(input, mptConfig){
-    var riskProfile = buildRiskProfile(input);
-    var cashBuckets = buildCashBuckets(input, riskProfile);
-    var assetAllocation = buildAssetAllocation(input, riskProfile, cashBuckets, mptConfig);
-    var equityAllocation = buildEquityAllocation(input, riskProfile, assetAllocation.target);
-    var bondAllocation = buildBondAllocation(input, riskProfile, assetAllocation.target);
-    var rebalance = buildRebalanceSuggestion(input, riskProfile, assetAllocation.target);
-    var summary = generateSummary(input, riskProfile, cashBuckets, assetAllocation);
+    var holdingsSummary = buildCurrentHoldingsSummary(input.existingAssets);
+    var derivedCurrentAllocation = input.currentAllocation || deriveCurrentAllocation(holdingsSummary);
+    var enrichedInput = Object.assign({}, input, derivedCurrentAllocation ? { currentAllocation: derivedCurrentAllocation } : {});
+
+    var riskProfile = buildRiskProfile(enrichedInput);
+    var cashBuckets = buildCashBuckets(enrichedInput, riskProfile, holdingsSummary);
+    var assetAllocation = buildAssetAllocation(enrichedInput, riskProfile, cashBuckets, holdingsSummary, mptConfig);
+    var equityAllocation = buildEquityAllocation(enrichedInput, riskProfile, assetAllocation.target, holdingsSummary);
+    var bondAllocation = buildBondAllocation(enrichedInput, riskProfile, assetAllocation.target, holdingsSummary);
+    var holdingsDiagnosis = buildHoldingsDiagnosis(holdingsSummary, assetAllocation.target, riskProfile, cashBuckets);
+    var rebalance = buildRebalanceSuggestion(enrichedInput, riskProfile, assetAllocation.target, holdingsSummary);
+    var summary = generateSummary(enrichedInput, riskProfile, cashBuckets, assetAllocation, holdingsSummary, holdingsDiagnosis);
 
     return {
       riskProfile: riskProfile,
@@ -697,6 +850,8 @@
       assetAllocation: assetAllocation,
       equityAllocation: equityAllocation,
       bondAllocation: bondAllocation,
+      currentHoldingsSummary: holdingsSummary,
+      holdingsDiagnosis: holdingsDiagnosis,
       rebalance: rebalance,
       summary: summary
     };
@@ -709,6 +864,8 @@
     buildAssetAllocation: buildAssetAllocation,
     buildEquityAllocation: buildEquityAllocation,
     buildBondAllocation: buildBondAllocation,
+    buildCurrentHoldingsSummary: buildCurrentHoldingsSummary,
+    buildHoldingsDiagnosis: buildHoldingsDiagnosis,
     buildRebalanceSuggestion: buildRebalanceSuggestion,
     demoMPTConfig: {
       enabled: true,
